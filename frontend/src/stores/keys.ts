@@ -9,9 +9,9 @@ const getApiBase = (): string => {
   const saved = localStorage.getItem('backendUrl')
   if (saved) return saved
 
-  // 自动检测后端端口（3000, 3001, 3002）
+  // 默认指向后端 Next.js dev server 的端口
   const hostname = window.location.hostname || 'localhost'
-  return `http://${hostname}:3002`
+  return `http://${hostname}:3000`
 }
 
 // 带超时的 fetch 封装

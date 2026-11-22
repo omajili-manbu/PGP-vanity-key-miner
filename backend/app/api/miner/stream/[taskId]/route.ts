@@ -84,6 +84,7 @@ export async function GET(
           attempts: task.totalAttempts,
           hashrate: 0,
           matchesFound: task.matchesFound,
+          archivedCount: taskManager.getArchivedCount(taskId),
           timestamp: Date.now(),
         };
         safeEnqueue(`data: ${JSON.stringify(initialMessage)}\n\n`);

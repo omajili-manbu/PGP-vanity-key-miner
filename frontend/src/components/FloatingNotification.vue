@@ -2,16 +2,19 @@
   <Transition name="slide-in">
     <div v-if="visible" class="floating-notification" :class="type">
       <div class="notification-content">
-        <span class="notification-icon">{{ icon }}</span>
+        <component :is="icon" class="notification-icon" :size="16" />
         <span class="notification-message">{{ message }}</span>
       </div>
-      <button class="notification-close" @click="close">×</button>
+      <button class="notification-close" @click="close" title="关闭">
+        <X :size="14" />
+      </button>
     </div>
   </Transition>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { Check, AlertTriangle, X, Info } from 'lucide-vue-next'
 
 const props = defineProps<{
   message: string
@@ -27,10 +30,10 @@ const visible = ref(false)
 
 const icon = computed(() => {
   switch (props.type) {
-    case 'success': return '✓'
-    case 'warning': return '⚠'
-    case 'error': return '✕'
-    default: return 'ℹ'
+    case 'success': return Check
+    case 'warning': return AlertTriangle
+    case 'error': return X
+    default: return Info
   }
 })
 

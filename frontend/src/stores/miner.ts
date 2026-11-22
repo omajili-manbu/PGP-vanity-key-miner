@@ -6,8 +6,12 @@ import type {
   SSEMessage,
   MiningTask,
   SpecialKey,
-  PatternRule,
 } from '../types'
+
+// 内存中最多保留的匹配密钥数量（避免高频命中时前端渲染卡死）
+const MAX_MATCHES_IN_MEMORY = 60
+// 内存中最多保留的日志条数
+const MAX_LOGS_IN_MEMORY = 100
 
 // 从 localStorage 加载 API URL，默认值为当前后端地址
 const getApiBase = (): string => {
@@ -15,7 +19,7 @@ const getApiBase = (): string => {
   if (saved) return saved
 
   const hostname = window.location.hostname || 'localhost'
-  return `http://${hostname}:3001`
+  return `http://${hostname}:3000`
 }
 
 // 带超时的 fetch 封装
@@ -59,6 +63,12 @@ export const useMinerStore = defineStore('miner', () => {
   const taskId = ref<string | null>(null)
   const attempts = ref(0)
   const hashrate = ref(0)
+  // 真实命中总数（来自 worker 的计数，不是 SSE 抽样条数）
+  const matchesFound = ref(0)
+  // 已落库（补全成功、可下载）的密钥数量
+  const archivedCount = ref(0)
+  // 后端存档总数（所有任务合计，来自 /api/keys）
+  const archivedTotal = ref(0)
   const matches = ref<SpecialKey[]>([])
   const logs = ref<Array<{ time: Date; type: 'info' | 'match' | 'error'; message: string; fingerprint?: string; color?: string }>>([])
   const hashrateHistory = ref<number[]>(Array(60).fill(0))
@@ -74,6 +84,8 @@ export const useMinerStore = defineStore('miner', () => {
   let sseReconnectTimer: ReturnType<typeof setTimeout> | null = null
   let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
   let connectionStartTime = 0
+  // 上次记录进度日志的时间
+  let lastProgressLogAt = 0
 
   // 计算属性
   const currentTask = computed<MiningTask | null>(() => null)
@@ -104,6 +116,12 @@ export const useMinerStore = defineStore('miner', () => {
         taskId.value = data.taskId
         isRunning.value = true
         sseReconnectCount.value = 0
+        // 新任务：清零计数与列表
+        matchesFound.value = 0
+        archivedCount.value = 0
+        attempts.value = 0
+        hashrate.value = 0
+        matches.value = []
 
         // 启动 SSE 连接
         startSSEConnection(data.taskId)
@@ -340,6 +358,12 @@ export const useMinerStore = defineStore('miner', () => {
       case 'progress':
         attempts.value = message.attempts
         hashrate.value = message.hashrate
+        if (typeof message.matchesFound === 'number') {
+          matchesFound.value = message.matchesFound
+        }
+        if (typeof message.archivedCount === 'number') {
+          archivedCount.value = message.archivedCount
+        }
 
         // 更新 hashrate 历史
         hashrateHistory.value.push(message.hashrate)
@@ -347,25 +371,34 @@ export const useMinerStore = defineStore('miner', () => {
           hashrateHistory.value.shift()
         }
 
-        addLog('info', `尝试: ${message.attempts}, Hashrate: ${message.hashrate.toFixed(1)} keys/s`)
+        // 进度日志限流：每秒最多一条，避免刷屏
+        const now = Date.now()
+        if (now - lastProgressLogAt > 1000) {
+          lastProgressLogAt = now
+          addLog('info', `尝试: ${message.attempts}, Hashrate: ${message.hashrate.toFixed(1)} keys/s`)
+        }
         break
 
       case 'match':
-        // 添加到匹配列表
+        // SSE 只带元数据（不含公钥正文，避免高频命中淹没浏览器）
         const newKey: SpecialKey = {
-          id: `${message.taskId}_${Date.now()}`,
+          id: `${message.taskId}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           taskId: message.taskId,
           fingerprint: message.fingerprint,
+          keyId: message.keyId,
           patternType: message.patternType,
           patternId: message.patternId,
           matchPosition: 0,
           matchedText: message.matchedText,
           attemptsToFind: message.attemptsToFind,
-          publicKeyArmored: message.publicKeyArmored, // 保存公钥内容
+          publicKeyArmored: '',   // 需要时再从 /api/keys 拉取
           color: message.color,
           createdAt: new Date().toISOString(),
         }
         matches.value.unshift(newKey)
+        if (matches.value.length > MAX_MATCHES_IN_MEMORY) {
+          matches.value.length = MAX_MATCHES_IN_MEMORY
+        }
 
         addLog('match', `发现特殊密钥: ${message.fingerprint} [${message.matchedText}]`, message.fingerprint, message.color)
         break
@@ -386,8 +419,8 @@ export const useMinerStore = defineStore('miner', () => {
     logs.value.push({ time: new Date(), type, message, fingerprint, color })
 
     // 限制日志数量
-    if (logs.value.length > 100) {
-      logs.value.shift()
+    if (logs.value.length > MAX_LOGS_IN_MEMORY) {
+      logs.value.splice(0, logs.value.length - MAX_LOGS_IN_MEMORY)
     }
   }
 
@@ -395,11 +428,116 @@ export const useMinerStore = defineStore('miner', () => {
     logs.value = []
   }
 
+  /**
+   * 从后端拉取已存档的密钥（最新在前）。
+   * 右侧列表用它展示真实存档，而不是 SSE 抽样条数。
+   */
+  async function fetchArchivedKeys(pageSize: number = 40) {
+    try {
+      const response = await fetchWithTimeout(`${apiBase.value}/api/keys?page=1&pageSize=${pageSize}`)
+      const data = await response.json()
+      if (!data.success || !Array.isArray(data.keys)) return
+      matches.value = data.keys.map((k: any) => ({
+        ...k,
+        createdAt: typeof k.createdAt === 'string' ? k.createdAt : new Date(k.createdAt).toISOString(),
+      })) as SpecialKey[]
+      if (typeof data.total === 'number') archivedTotal.value = data.total
+    } catch {
+      // 轮询失败忽略，下一轮再试
+    }
+  }
+
+  /**
+   * 按 keyId 拉取公钥正文（SSE 不带正文，用时才拉）
+   */
+  async function fetchPublicKey(keyId: string): Promise<string | null> {
+    try {
+      const response = await fetchWithTimeout(`${apiBase.value}/api/keys?page=1&pageSize=200`)
+      const data = await response.json()
+      if (!data.success) return null
+      const found = (data.keys || []).find((k: any) => k.keyId === keyId)
+      return found?.publicKeyArmored || null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 下载私钥
+   * 后端私钥持久化保存在 data/private-keys.jsonl，可重复下载
+   */
+  async function fetchPrivateKey(keyId: string): Promise<{ ok: true; privateKey: string; fingerprint: string } | { ok: false; error: string }> {
+    try {
+      const response = await fetchWithTimeout(`${apiBase.value}/api/keys/private?keyId=${encodeURIComponent(keyId)}`)
+      const data = await response.json()
+
+      if (data.success && data.privateKeyArmored) {
+        return { ok: true, privateKey: data.privateKeyArmored, fingerprint: data.fingerprint }
+      }
+      return { ok: false, error: data.error || '私钥不可用' }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : '无法连接到后端服务',
+      }
+    }
+  }
+
+  /**
+   * 批量导出（zip / json），直接由后端打包并触发浏览器下载
+   */
+  async function exportKeys(options: {
+    format: 'zip' | 'json'
+    withPrivate?: boolean
+    taskId?: string
+    limit?: number
+  }): Promise<{ ok: boolean; error?: string; count?: number }> {
+    try {
+      const qs = new URLSearchParams({ format: options.format })
+      if (options.withPrivate !== undefined) qs.set('withPrivate', String(options.withPrivate))
+      if (options.taskId) qs.set('taskId', options.taskId)
+      if (options.limit) qs.set('limit', String(options.limit))
+
+      const url = `${apiBase.value}/api/keys/export?${qs.toString()}`
+
+      // 用 fetch 拿 blob，再触发下载（保留服务端文件名）
+      const response = await fetch(url)
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        return { ok: false, error: err.error || `导出失败 (HTTP ${response.status})` }
+      }
+
+      const disposition = response.headers.get('content-disposition') || ''
+      const filenameMatch = disposition.match(/filename="([^"]+)"/)
+      const filename = filenameMatch ? filenameMatch[1] : `pgp-vanity-keys.${options.format}`
+
+      const blob = await response.blob()
+      const objectUrl = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = objectUrl
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(objectUrl)
+
+      return { ok: true }
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : '导出失败',
+      }
+    }
+  }
+
   return {
     isRunning,
     taskId,
     attempts,
     hashrate,
+    matchesFound,
+    archivedCount,
+    archivedTotal,
     matches,
     logs,
     hashrateHistory,
@@ -412,5 +550,9 @@ export const useMinerStore = defineStore('miner', () => {
     startMining,
     stopMining,
     clearLogs,
+    fetchPrivateKey,
+    fetchPublicKey,
+    fetchArchivedKeys,
+    exportKeys,
   }
 })

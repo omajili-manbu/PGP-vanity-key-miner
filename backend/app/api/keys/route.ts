@@ -17,10 +17,10 @@ export async function GET(request: NextRequest) {
 
     const { keys, total } = getKeys(page, pageSize);
 
-    // 转换日期为 ISO 字符串
+    // 转换日期为 ISO 字符串（文件存储下 createdAt 反序列化后已是字符串）
     const formattedKeys = keys.map(key => ({
       ...key,
-      createdAt: key.createdAt.toISOString(),
+      createdAt: new Date(key.createdAt).toISOString(),
     }));
 
     return NextResponse.json({

@@ -2,8 +2,9 @@
 
 export interface KeyPair {
   publicKey: string;      // ASCII armored 公钥
-  privateKey: string;     // ASCII armored 私钥（不存储）
-  fingerprint: string;    // 公钥指纹
+  privateKey: string;     // ASCII armored 私钥（不落盘，仅内存中短期保留供下载）
+  fingerprint: string;    // 公钥指纹（40 位 hex）
+  keyId: string;          // 长 Key ID（16 位 hex，指纹后 16 位）—— 规则匹配的目标
 }
 
 // ========== 规则引擎类型定义 ==========
@@ -40,7 +41,9 @@ export interface RuleGroup {
   logicOperator: 'AND' | 'OR'; // 组内逻辑关系
   priority: number;         // 规则组优先级 (1-100, 默认50)
   enabled: boolean;         // 是否启用
-  ruleRefs: RuleReference[]; // 组内规则引用列表
+  // 组内自有规则（每个组拥有自己的规则集合，互不影响）
+  rules: PatternRule[];
+  ruleRefs: RuleReference[]; // 组内规则引用列表（兼容旧数据）
   createdAt: Date;
   updatedAt: Date;
 }
@@ -131,12 +134,17 @@ export interface MiningTask {
   matchesFound: number;
   // 规则引擎配置
   ruleConfig?: RuleConfiguration;
+  // 独立规则之间的组合逻辑
+  logicOperator?: 'AND' | 'OR';
+  // 规则组（组内规则按各组自身的 AND/OR 组合）
+  groups?: RuleGroup[];
 }
 
 export interface SpecialKey {
   id: string;
   taskId: string;
   fingerprint: string;
+  keyId: string;          // 长 Key ID（16 位 hex）—— 规则匹配的实际目标
   patternType: PatternType;
   patternId: string; // 匹配的规则ID
   matchPosition: number;
@@ -177,6 +185,8 @@ export interface ProgressMessage {
   attempts: number;
   hashrate: number;
   matchesFound: number;
+  /** 已落库（补全成功并可下载）的密钥数量 */
+  archivedCount?: number;
   timestamp: number;
 }
 
@@ -184,12 +194,16 @@ export interface MatchMessage {
   type: 'match';
   taskId: string;
   fingerprint: string;
+  keyId: string;          // 长 Key ID（16 位 hex）—— 规则匹配的实际目标
   patternType: string;
   patternId: string;
   matchedText: string;
   color: string;
   attemptsToFind: number;
-  publicKeyArmored: string; // 添加公钥内容
+  // 完整公钥/私钥正文不进 SSE（命中可能每秒数百条，带正文会淹没浏览器）。
+  // 前端按需从 /api/keys 与 /api/keys/private 拉取。
+  publicKeyAvailable?: boolean;
+  privateKeyAvailable?: boolean;
   // 规则引擎扩展字段
   executionResult?: ExecutionResult;
   triggeredByGroup?: string;

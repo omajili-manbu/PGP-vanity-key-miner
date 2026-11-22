@@ -1,308 +1,387 @@
 <template>
   <div class="dashboard">
-    <!-- 主内容区 -->
     <div class="dashboard-content">
-      <!-- 左侧面板：控制面板/实时终端/已发现密钥 -->
-      <div class="left-panel">
-        <!-- 控制面板 + 实时终端 + 已发现密钥（Tab切换） -->
-        <TabContainer
-          :tabs="[
-            { id: 'control', label: '控制面板' },
-            { id: 'rules', label: '规则引擎' },
-            { id: 'terminal', label: '实时终端' },
-            { id: 'keys', label: '已发现的特殊密钥' }
-          ]"
-          default-tab="control"
-          class="main-tab-container"
-        >
-          <template #default="{ activeTab }">
-            <Transition name="fade" mode="out-in">
-              <div v-if="activeTab === 'control'" class="tab-panel" key="control">
-                <MinerControl />
-              </div>
-              <div v-else-if="activeTab === 'rules'" class="tab-panel" key="rules">
-                <RuleGroupManager />
-              </div>
-              <div v-else-if="activeTab === 'terminal'" class="tab-panel" key="terminal">
-                <MinerTerminal />
-              </div>
-              <div v-else-if="activeTab === 'keys'" class="tab-panel" key="keys">
-                <div class="keys-list" v-if="minerStore.matches.length > 0">
-                  <KeyCard
-                    v-for="key in minerStore.matches"
-                    :key="key.id"
-                    :keyData="key"
-                  />
-                </div>
-                <div v-else class="illustration-empty">
-                  <div class="icon">🔍</div>
-                  <div class="text">暂无特殊密钥</div>
-                </div>
-              </div>
-            </Transition>
-          </template>
-        </TabContainer>
-      </div>
+      <!-- 左列：控制面板 + 规则引擎 -->
+      <section class="col col-left">
+        <div class="panel panel-control">
+          <div class="panel-head">
+            <span class="panel-title">控制面板</span>
+            <span class="panel-hint">{{ enabledRuleCount }} 条规则生效</span>
+          </div>
+          <div class="panel-body">
+            <MinerControl />
+          </div>
+        </div>
 
-      <!-- 右侧面板：StatsPanel + Hashrate 趋势/监控 -->
-      <div class="right-panel">
-        <!-- 统计面板 -->
-        <StatsPanel />
+        <div class="panel panel-rules">
+          <div class="panel-head">
+            <span class="panel-title">规则引擎</span>
+          </div>
+          <div class="panel-body">
+            <RuleGroupManager />
+          </div>
+        </div>
+      </section>
 
-        <!-- Hashrate 趋势 + 监控（Tab切换） -->
-        <TabContainer
-          :tabs="[
-            { id: 'chart', label: 'Hashrate 趋势' },
-            { id: 'monitor', label: 'Hashrate 监控' }
-          ]"
-          default-tab="chart"
-          class="top-tab-container"
-        >
-          <template #default="{ activeTab }">
-            <Transition name="fade" mode="out-in">
-              <div v-if="activeTab === 'chart'" class="tab-panel" key="chart">
-                <div class="chart-wrapper">
-                  <HashrateChart />
-                </div>
-              </div>
-              <div v-else-if="activeTab === 'monitor'" class="tab-panel" key="monitor">
-                <StatsPanel mode="detailed" />
-              </div>
-            </Transition>
-          </template>
-        </TabContainer>
-      </div>
+      <!-- 中列：实时终端 + 统计 + 图表 -->
+      <section class="col col-mid">
+        <div class="panel panel-terminal">
+          <div class="panel-head">
+            <span class="panel-title">实时终端</span>
+            <span class="panel-hint">{{ minerStore.logs.length }} 条</span>
+          </div>
+          <div class="panel-body panel-body-flush">
+            <MinerTerminal />
+          </div>
+        </div>
+
+        <div class="panel panel-stats">
+          <div class="panel-body">
+            <StatsPanel />
+          </div>
+        </div>
+
+        <div class="panel panel-chart">
+          <div class="panel-head">
+            <span class="panel-title">Hashrate 趋势</span>
+          </div>
+          <div class="panel-body panel-body-flush">
+            <div class="chart-wrapper">
+              <HashrateChart />
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 右列：已发现的特殊密钥 -->
+      <section class="col col-right">
+        <div class="panel panel-keys">
+          <div class="panel-head">
+            <span class="panel-title">已发现的特殊密钥</span>
+            <div class="panel-head-actions">
+              <span class="panel-hint panel-hint-accent" :title="`存档总数 ${minerStore.archivedTotal} 把，列表显示最近 ${minerStore.matches.length} 把`">
+                {{ minerStore.archivedTotal }}
+              </span>
+              <button
+                class="icon-action-btn"
+                :disabled="exporting"
+                title="导出为 ZIP（含公钥与私钥）"
+                @click="doExport('zip')"
+              >
+                <FileArchive class="icon-sm" :size="13" />
+              </button>
+              <button
+                class="icon-action-btn"
+                :disabled="exporting"
+                title="导出为 JSON（含公钥与私钥）"
+                @click="doExport('json')"
+              >
+                <Braces class="icon-sm" :size="13" />
+              </button>
+            </div>
+          </div>
+          <div class="panel-body panel-body-flush">
+            <div v-if="minerStore.matches.length > 0" class="keys-list">
+              <KeyCard
+                v-for="key in visibleKeys"
+                :key="key.id"
+                :keyData="key"
+              />
+            </div>
+            <div v-else class="illustration-empty">
+              <Search class="empty-icon" :size="40" />
+              <div class="text">暂无特殊密钥</div>
+            </div>
+          </div>
+        </div>
+      </section>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
+import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
+import { Search, FileArchive, Braces } from 'lucide-vue-next'
 import { useMinerStore } from '../stores/miner'
+import { useRuleEngineStore } from '../stores/ruleEngine'
 import StatsPanel from '../components/StatsPanel.vue'
 import MinerControl from '../components/MinerControl.vue'
 import MinerTerminal from '../components/MinerTerminal.vue'
 import HashrateChart from '../components/HashrateChart.vue'
 import KeyCard from '../components/KeyCard.vue'
-import TabContainer from '../components/TabContainer.vue'
 import RuleGroupManager from '../components/RuleGroupManager.vue'
 
 const minerStore = useMinerStore()
+const ruleEngineStore = useRuleEngineStore()
+
+const enabledRuleCount = computed(
+  () =>
+    ruleEngineStore.independentRules.filter(r => r.enabled).length +
+    ruleEngineStore.ruleGroups
+      .filter(g => g.enabled)
+      .reduce((n, g) => n + g.rules.filter(r => r.enabled).length, 0)
+)
+
+// 批量导出（由后端打包，导出后端全量存档，不受前端列表上限影响）
+const exporting = ref(false)
+
+// 只渲染最近的一批卡片，避免高频命中时 DOM 过多导致浏览器卡死
+const visibleKeys = computed(() => minerStore.matches.slice(0, 40))
+
+// 右侧列表展示「已存档」的真实数据：定期从后端拉取（SSE 只做抽样提醒与终端日志）
+let archiveTimer: ReturnType<typeof setInterval> | null = null
+
+function startArchivePolling() {
+  if (archiveTimer) return
+  minerStore.fetchArchivedKeys(40)
+  archiveTimer = setInterval(() => minerStore.fetchArchivedKeys(40), 4000)
+}
+
+function stopArchivePolling() {
+  if (!archiveTimer) return
+  clearInterval(archiveTimer)
+  archiveTimer = null
+  // 停挖后补一次，确保拿到最后一批
+  minerStore.fetchArchivedKeys(40)
+}
+
+watch(
+  () => minerStore.isRunning,
+  running => {
+    if (running) startArchivePolling()
+    else stopArchivePolling()
+  },
+  { immediate: true }
+)
+
+onMounted(() => {
+  // 进页面先拉一次存档，展示历史结果
+  minerStore.fetchArchivedKeys(40)
+  if (minerStore.isRunning) startArchivePolling()
+})
+
+onBeforeUnmount(() => {
+  if (archiveTimer) clearInterval(archiveTimer)
+  archiveTimer = null
+})
+
+async function doExport(format: 'zip' | 'json') {
+  if (exporting.value) return
+  exporting.value = true
+  try {
+    const result = await minerStore.exportKeys({ format, withPrivate: true })
+    if (!result.ok) {
+      alert('导出失败：\n' + (result.error || '未知错误'))
+    }
+  } finally {
+    exporting.value = false
+  }
+}
 </script>
 
 <style scoped>
 .dashboard {
-  min-height: 100vh;
-  background: #f8f9fa;
-  color: #333333;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--bg-app);
+  color: var(--fg);
   font-family: Georgia, 'Times New Roman', Times, serif;
-}
-
-@media (prefers-color-scheme: dark) {
-  .dashboard {
-    background: #1a1a1a;
-    color: #f0f0f0;
-  }
 }
 
 .dashboard-content {
   display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 12px;
-  padding: 16px;
+  grid-template-columns: minmax(240px, 0.85fr) minmax(0, 1.25fr) minmax(240px, 1fr);
+  gap: 10px;
+  padding: 10px;
   height: 100vh;
-  max-width: 1200px;
-  margin: 0 auto;
   box-sizing: border-box;
 }
 
-.left-panel {
+.col {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  height: 100%;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
   overflow: hidden;
 }
 
-.right-panel {
+/* 无边框微阴影风格：靠背景色差区分层级 */
+.panel {
+  background: var(--bg-panel);
+  border: none;
+  border-radius: var(--radius);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.25);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  height: 100%;
+  min-height: 0;
   overflow: hidden;
 }
 
-.right-panel > :nth-child(1) {
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
   flex-shrink: 0;
 }
 
-.right-panel > :nth-child(2) {
+.panel-title {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.panel-hint {
+  font-size: 11px;
+  color: var(--fg-dim);
+  font-family: 'Courier New', monospace;
+}
+
+.panel-hint-accent {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* 面板标题栏右侧的操作区 */
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* 仅图标的小按钮 */
+.icon-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.icon-action-btn:hover:not(:disabled) {
+  background: rgba(147, 51, 234, 0.15);
+  border-color: rgba(147, 51, 234, 0.25);
+  color: var(--accent-soft);
+}
+
+.icon-action-btn:disabled {
+  opacity: 0.4;
+  cursor: wait;
+}
+
+.icon-sm {
+  display: block;
+  flex-shrink: 0;
+}
+
+.panel-body {
   flex: 1;
   min-height: 0;
-  overflow: hidden;
-}
-
-.main-tab-container {
-  flex: 1;
-  min-height: 0;
-  background: #ffffff;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transition: all 0.3s ease;
-}
-
-.main-tab-container:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  transform: translateY(-4px);
-}
-
-@media (prefers-color-scheme: dark) {
-  .main-tab-container {
-    background: #2a2a2a;
-    border: 1px solid #333;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-  .main-tab-container:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  }
-}
-
-.main-tab-container .tab-panel {
-  height: 100%;
   overflow-y: auto;
-  overflow-x: hidden;
-  padding: 12px;
+  padding: 0 12px 10px;
 }
 
-.top-tab-container {
+.panel-body-flush {
+  padding: 0;
+  overflow: hidden;
+}
+
+/* 左列：控制面板固定高度，规则引擎占剩余空间 */
+.panel-control {
+  flex-shrink: 0;
+}
+
+.panel-rules {
   flex: 1;
   min-height: 0;
-  background: #ffffff;
-  border-radius: 8px;
-  border: 1px solid #e0e0e0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-  transition: all 0.3s ease;
 }
 
-.top-tab-container:hover {
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
-  transform: translateY(-4px);
+/* 中列：终端占大部分 */
+.panel-terminal {
+  flex: 1 1 55%;
+  min-height: 160px;
 }
 
-@media (prefers-color-scheme: dark) {
-  .top-tab-container {
-    background: #2a2a2a;
-    border: 1px solid #333;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  }
-  .top-tab-container:hover {
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-  }
+.panel-stats {
+  flex-shrink: 0;
 }
 
-.tab-panel {
-  height: 100%;
-  overflow: hidden;
-  padding: 12px;
+.panel-chart {
+  flex: 1 1 30%;
+  min-height: 130px;
+}
+
+/* 右列：密钥列表占满 */
+.panel-keys {
+  flex: 1;
+  min-height: 0;
 }
 
 .keys-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
   height: 100%;
   overflow-y: auto;
-  padding-right: 8px;
-}
-
-.empty-state {
-  color: #999999;
-  text-align: center;
-  padding: 40px 0;
-  font-size: 14px;
-  font-weight: 500;
-}
-
-@media (prefers-color-scheme: dark) {
-  .empty-state {
-    color: #777777;
-  }
 }
 
 .chart-wrapper {
   height: 100%;
-  position: relative;
-  border-radius: 8px;
-  overflow: hidden;
-  background: #f0f0f0;
+  min-height: 0;
+  padding: 6px 8px;
+  box-sizing: border-box;
 }
 
-@media (prefers-color-scheme: dark) {
-  .chart-wrapper {
-    background: #222;
-  }
-}
-
-/* 插画风格空状态 */
 .illustration-empty {
-  text-align: center;
-  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 100%;
+  color: var(--fg-dim);
+  font-size: 13px;
 }
 
-.illustration-empty .icon {
-  font-size: 48px;
-  margin-bottom: 16px;
-  opacity: 0.5;
+.empty-icon {
+  opacity: 0.35;
 }
 
-.illustration-empty .text {
-  font-size: 14px;
-  color: #999;
-  font-weight: 500;
-}
-
-@media (prefers-color-scheme: dark) {
-  .illustration-empty .text {
-    color: #777;
-  }
-}
-
-/* 淡入淡出动画 */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-/* 响应式设计 */
-@media (max-width: 1024px) {
+/* 窄屏回退为纵向堆叠 */
+@media (max-width: 900px) {
   .dashboard-content {
     grid-template-columns: 1fr;
-    grid-template-rows: auto 1fr;
     height: auto;
-    min-height: 100vh;
+    overflow-y: auto;
   }
-  
-  .left-panel,
-  .right-panel {
-    height: 400px;
-  }
-}
 
-@media (max-width: 768px) {
-  .dashboard-content {
-    padding: 12px;
-    gap: 8px;
+  .dashboard {
+    height: auto;
+    overflow: auto;
   }
-  
-  .main-tab-container .tab-panel,
-  .tab-panel {
-    padding: 8px;
+
+  .col {
+    overflow: visible;
   }
-  
-  .dashboard-content {
-    grid-template-columns: 1fr;
+
+  .panel-terminal,
+  .panel-chart {
+    flex: none;
+    height: 320px;
+  }
+
+  .panel-keys {
+    height: 420px;
   }
 }
 </style>

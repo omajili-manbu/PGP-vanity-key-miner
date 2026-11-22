@@ -34,7 +34,9 @@ export interface RuleGroup {
   logicOperator: 'AND' | 'OR'; // 组内逻辑关系
   priority: number;         // 规则组优先级 (1-100, 默认50)
   enabled: boolean;         // 是否启用
-  ruleRefs: RuleReference[]; // 组内规则引用列表
+  // 组内自有规则（每个组拥有自己的规则集合，互不影响）
+  rules: PatternRule[];
+  ruleRefs: RuleReference[]; // 组内规则引用列表（兼容旧数据）
   createdAt: string;
   updatedAt: string;
 }
@@ -132,12 +134,17 @@ export interface MiningTask {
   matchesFound: number;
   // 规则引擎配置
   ruleConfig?: RuleConfiguration;
+  // 独立规则之间的组合逻辑
+  logicOperator?: 'AND' | 'OR';
+  // 规则组
+  groups?: RuleGroup[];
 }
 
 export interface SpecialKey {
   id: string;
   taskId: string;
   fingerprint: string;
+  keyId: string;          // 长 Key ID（16 位 hex）—— 规则匹配的实际目标
   patternType: string;
   patternId: string; // 匹配的规则ID
   matchPosition: number;
@@ -169,6 +176,8 @@ export interface ProgressMessage {
   attempts: number;
   hashrate: number;
   matchesFound: number;
+  /** 已落库（补全成功、可下载）的密钥数量 */
+  archivedCount?: number;
   timestamp: number;
 }
 
@@ -176,12 +185,15 @@ export interface MatchMessage {
   type: 'match';
   taskId: string;
   fingerprint: string;
+  keyId: string;          // 长 Key ID（16 位 hex）—— 规则匹配的实际目标
   patternType: string;
   patternId: string;
   matchedText: string;
   color: string;
   attemptsToFind: number;
-  publicKeyArmored: string; // 添加公钥内容
+  // 正文不进 SSE：完整公钥从 /api/keys 拉，私钥从 /api/keys/private 拉
+  publicKeyAvailable?: boolean;
+  privateKeyAvailable?: boolean;
   // 规则引擎扩展字段
   executionResult?: ExecutionResult;
   triggeredByGroup?: string;
@@ -206,7 +218,8 @@ export type SSEMessage = ProgressMessage | MatchMessage | ErrorMessage | Complet
 export interface StartMinerRequest {
   patterns: PatternRule[]; // 多条规则
   threads?: number;
-  logicOperator?: 'AND' | 'OR'; // 筛选条件组合逻辑（向后兼容）
+  logicOperator?: 'AND' | 'OR'; // 独立规则之间的组合逻辑
+  groups?: RuleGroup[]; // 规则组（组内规则按各组自身的 AND/OR 组合）
   ruleConfig?: RuleConfiguration; // 规则引擎配置
 }
 

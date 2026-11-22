@@ -27,17 +27,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import { useMinerStore } from '../stores/miner'
 
 const minerStore = useMinerStore()
 const terminalContent = ref<HTMLDivElement>()
 
-const logs = minerStore.logs
-
-function clearLogs() {
-  minerStore.clearLogs()
-}
+const logs = computed(() => minerStore.logs)
 
 function formatTime(date: Date): string {
   return date.toLocaleTimeString('zh-CN', {
@@ -49,7 +45,7 @@ function formatTime(date: Date): string {
 
 // 自动滚动到底部
 watch(
-  () => logs.length,
+  () => logs.value.length,
   () => {
     nextTick(() => {
       if (terminalContent.value) {
@@ -62,9 +58,9 @@ watch(
 
 <style scoped>
 .miner-terminal {
-  background: #ffffff;
-  border: 1px solid #e0e0e0;
-  border-radius: 8px;
+  background: var(--bg-sunken);
+  border: none;
+  border-radius: 0;
   overflow: hidden;
   height: 100%;
   display: flex;
@@ -74,28 +70,28 @@ watch(
 .terminal-content {
   flex: 1;
   overflow-y: auto;
-  padding: 12px 16px;
+  padding: 8px 10px;
   font-family: 'Courier New', monospace;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
 }
 
 .log-line {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   word-break: break-all;
 }
 
 .timestamp {
-  color: #999999;
+  color: var(--fg-dim);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 .separator {
-  color: #cccccc;
+  color: #3a3a3a;
   flex-shrink: 0;
 }
 
@@ -105,24 +101,29 @@ watch(
 }
 
 .message {
-  color: #333333;
+  color: #d4d4d4;
 }
 
 .log-line.info .message {
-  color: #333333;
+  color: var(--fg-muted);
 }
 
 .log-line.match .message {
-  color: #0066cc;
+  color: #00ff41;
+}
+
+.log-line.match .timestamp {
+  color: #00ff41;
 }
 
 .log-line.error .message {
-  color: #cc0000;
+  color: var(--red);
 }
 
 .empty-state {
-  color: #999999;
+  color: var(--fg-dim);
   text-align: center;
-  padding: 40px 0;
+  padding: 24px 0;
+  font-family: Georgia, 'Times New Roman', Times, serif;
 }
 </style>

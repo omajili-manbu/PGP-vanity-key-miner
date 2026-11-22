@@ -42,6 +42,7 @@ export function createRuleGroup(
     logicOperator,
     priority,
     enabled: true,
+    rules: [],
     ruleRefs: [],
     createdAt: now,
     updatedAt: now,
@@ -188,7 +189,49 @@ export const useRuleEngineStore = defineStore('ruleEngine', () => {
       group.enabled = !group.enabled
     }
   }
-  
+
+  // ========== 规则组自有规则操作 ==========
+  // 每个规则组拥有独立的规则集合，组与组之间互不影响
+
+  function addGroupRule(groupId: string, rule?: Partial<PatternRule>): PatternRule | null {
+    const group = ruleGroups.value.find(g => g.id === groupId)
+    if (!group) return null
+
+    const colors = ['#00f0ff', '#ff6b6b', '#4ecdc4', '#ffe66d', '#a8e6cf', '#ff8b94']
+    const newRule: PatternRule = {
+      ...createDefaultRule(),
+      id: generateId(),
+      color: colors[group.rules.length % colors.length],
+      name: `组内规则 ${group.rules.length + 1}`,
+      ...rule,
+    }
+    group.rules.push(newRule)
+    group.updatedAt = new Date().toISOString()
+    return newRule
+  }
+
+  function removeGroupRule(groupId: string, ruleId: string) {
+    const group = ruleGroups.value.find(g => g.id === groupId)
+    if (!group) return
+
+    const index = group.rules.findIndex(r => r.id === ruleId)
+    if (index > -1) {
+      group.rules.splice(index, 1)
+      group.updatedAt = new Date().toISOString()
+    }
+  }
+
+  function updateGroupRule(groupId: string, ruleId: string, updates: Partial<PatternRule>) {
+    const group = ruleGroups.value.find(g => g.id === groupId)
+    if (!group) return
+
+    const rule = group.rules.find(r => r.id === ruleId)
+    if (rule) {
+      Object.assign(rule, updates)
+      group.updatedAt = new Date().toISOString()
+    }
+  }
+
   // ========== 规则组内规则引用操作 ==========
   
   function addRuleToGroup(ruleId: string, groupId: string) {
@@ -246,7 +289,12 @@ export const useRuleEngineStore = defineStore('ruleEngine', () => {
   
   function importConfiguration(config: RuleConfiguration) {
     independentRules.value = config.independentRules
-    ruleGroups.value = config.ruleGroups
+    // 兼容旧配置：规则组可能没有自有 rules 字段
+    ruleGroups.value = (config.ruleGroups || []).map(g => ({
+      ...g,
+      rules: g.rules || [],
+      ruleRefs: g.ruleRefs || [],
+    }))
     defaultRulePriority.value = config.defaultRulePriority
     defaultGroupPriority.value = config.defaultGroupPriority
     conflictResolution.value = config.conflictResolution
@@ -287,7 +335,12 @@ export const useRuleEngineStore = defineStore('ruleEngine', () => {
     removeRuleGroup,
     updateRuleGroup,
     toggleRuleGroup,
-    
+
+    // 规则组自有规则操作
+    addGroupRule,
+    removeGroupRule,
+    updateGroupRule,
+
     // 规则组内规则引用操作
     addRuleToGroup,
     removeRuleFromGroup,

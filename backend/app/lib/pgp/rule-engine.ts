@@ -326,6 +326,7 @@ export function createRuleGroup(
     logicOperator,
     priority,
     enabled: true,
+    rules: [],
     ruleRefs: [],
     createdAt: new Date(),
     updatedAt: new Date(),
